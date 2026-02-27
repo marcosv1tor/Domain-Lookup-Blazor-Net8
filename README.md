@@ -196,3 +196,7 @@ dotnet run --project src/Desafio.Umbler
 ```bash
 dotnet test
 ```
+
+> **Nota sobre Organização:** 
+Optei por organizar as camadas em pastas para manter a simplicidade da execução do desafio. 
+Em um cenário de sistema distribuído de grande escala, a separação física em múltiplos projetos (`.csproj`) seria recomendada para garantir a integridade absoluta das dependências.
