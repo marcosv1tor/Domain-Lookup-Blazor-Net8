@@ -1,0 +1,47 @@
+<form class="search-container animate-in" @onsubmit="SubmitAsync" @onsubmit:preventDefault>
+    <div class="input-group">
+        <input
+            id="txt-search"
+            name="txt-search"
+            class="form-control"
+            type="text"
+            placeholder="Digite o domínio (exemplo: umbler.com)"
+            value="@Domain"
+            @oninput="ChangeDomainAsync"
+            disabled="@IsLoading"
+            autocomplete="off" />
+        
+        <button
+            type="submit"
+            id="btn-search"
+            class="btn-primary"
+            disabled="@IsLoading">
+            @(IsLoading ? "Pesquisando..." : "Pesquisar")
+        </button>
+    </div>
+</form>
+
+@code {
+    [Parameter]
+    public string Domain { get; set; } = string.Empty;
+
+    [Parameter]
+    public bool IsLoading { get; set; }
+
+    [Parameter]
+    public EventCallback<string> OnDomainChanged { get; set; }
+
+    [Parameter]
+    public EventCallback OnSubmit { get; set; }
+
+    private Task SubmitAsync()
+    {
+        return OnSubmit.InvokeAsync();
+    }
+
+    private Task ChangeDomainAsync(ChangeEventArgs eventArgs)
+    {
+        var value = eventArgs.Value?.ToString() ?? string.Empty;
+        return OnDomainChanged.InvokeAsync(value);
+    }
+}

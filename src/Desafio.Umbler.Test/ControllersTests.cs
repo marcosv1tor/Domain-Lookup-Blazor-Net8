@@ -1,13 +1,20 @@
+using System;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Desafio.Umbler.Application.Contracts;
+using Desafio.Umbler.Application.DTOs;
+using Desafio.Umbler.Application.Exceptions;
+using Desafio.Umbler.Application.Services;
 using Desafio.Umbler.Controllers;
+using Desafio.Umbler.Domain.Entities;
+using Desafio.Umbler.Infrastructure.Persistence;
 using Desafio.Umbler.Models;
-using DnsClient;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Moq;
-using System;
-using System.Threading.Tasks;
 
 namespace Desafio.Umbler.Test
 {
@@ -17,144 +24,239 @@ namespace Desafio.Umbler.Test
         [TestMethod]
         public void Home_Index_returns_View()
         {
-            //arrange 
             var controller = new HomeController();
 
-            //act
             var response = controller.Index();
             var result = response as ViewResult;
 
-            //assert
             Assert.IsNotNull(result);
         }
 
         [TestMethod]
         public void Home_Error_returns_View_With_Model()
         {
-            //arrange 
-            var controller = new HomeController();
-            controller.ControllerContext = new ControllerContext();
-            controller.ControllerContext.HttpContext = new DefaultHttpContext();
+            var controller = new HomeController
+            {
+                ControllerContext = new ControllerContext
+                {
+                    HttpContext = new DefaultHttpContext()
+                }
+            };
 
-            //act
             var response = controller.Error();
             var result = response as ViewResult;
-            var model = result.Model as ErrorViewModel;
+            var model = result?.Model as ErrorViewModel;
 
-            //assert
             Assert.IsNotNull(result);
             Assert.IsNotNull(model);
         }
-        
+
         [TestMethod]
-        public void Domain_In_Database()
+        public async Task Domain_ReturnsCachedData_WhenTtlIsValid()
         {
-            //arrange 
-            var options = new DbContextOptionsBuilder<DatabaseContext>()
-                .UseInMemoryDatabase(databaseName: "Find_searches_url")
-                .Options;
+            var now = new DateTime(2026, 2, 26, 12, 0, 0, DateTimeKind.Utc);
 
-            var domain = new Domain { Id = 1, Ip = "192.168.0.1", Name = "test.com", UpdatedAt = DateTime.Now, HostedAt = "umbler.corp", Ttl = 60, WhoIs = "Ns.umbler.com" };
-
-            // Insert seed data into the database using one instance of the context
-            using (var db = new DatabaseContext(options))
+            using var db = CreateInMemoryDbContext();
+            db.Domains.Add(new DomainRecord
             {
-                db.Domains.Add(domain);
-                db.SaveChanges();
-            }
+                Name = "test.com",
+                Ip = "192.168.0.1",
+                UpdatedAt = now.AddSeconds(-10),
+                HostedAt = "umbler.corp",
+                Ttl = 60,
+                WhoIs = "Name Server: ns1.test.com\nName Server: ns2.test.com"
+            });
+            db.SaveChanges();
 
-            // Use a clean instance of the context to run the test
-            using (var db = new DatabaseContext(options))
-            {
-                var controller = new DomainController(db);
+            var dnsGateway = new Mock<IDnsLookupGateway>(MockBehavior.Strict);
+            var whoisGateway = new Mock<IWhoisGateway>(MockBehavior.Strict);
+            var service = CreateService(db, dnsGateway, whoisGateway, now);
 
-                //act
-                var response = controller.Get("test.com");
-                var result = response.Result as OkObjectResult;
-                var obj = result.Value as Domain;
-                Assert.AreEqual(obj.Id, domain.Id);
-                Assert.AreEqual(obj.Ip, domain.Ip);
-                Assert.AreEqual(obj.Name, domain.Name);
-            }
+            var response = await service.GetAsync("TEST.COM");
+
+            Assert.AreEqual("cache", response.Source);
+            Assert.AreEqual("test.com", response.Domain);
+            Assert.AreEqual("192.168.0.1", response.Ip);
+            Assert.IsTrue(response.NameServers.Contains("ns1.test.com"));
+
+            dnsGateway.VerifyNoOtherCalls();
+            whoisGateway.VerifyNoOtherCalls();
         }
 
         [TestMethod]
-        public void Domain_Not_In_Database()
+        public async Task Domain_RefreshesFromExternal_WhenTtlExpired()
         {
-            //arrange 
-            var options = new DbContextOptionsBuilder<DatabaseContext>()
-                .UseInMemoryDatabase(databaseName: "Find_searches_url")
-                .Options;
+            var now = new DateTime(2026, 2, 26, 12, 0, 0, DateTimeKind.Utc);
 
-            // Use a clean instance of the context to run the test
-            using (var db = new DatabaseContext(options))
+            using var db = CreateInMemoryDbContext();
+            db.Domains.Add(new DomainRecord
             {
-                var controller = new DomainController(db);
+                Name = "test.com",
+                Ip = "192.168.0.1",
+                UpdatedAt = now.AddSeconds(-120),
+                HostedAt = "old-host",
+                Ttl = 30,
+                WhoIs = "old whois"
+            });
+            db.SaveChanges();
 
-                //act
-                var response = controller.Get("test.com");
-                var result = response.Result as OkObjectResult;
-                var obj = result.Value as Domain;
-                Assert.IsNotNull(obj);
-            }
+            var dnsGateway = new Mock<IDnsLookupGateway>();
+            dnsGateway
+                .Setup(gateway => gateway.QueryAsync("test.com", It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new DnsLookupResult
+                {
+                    Ip = "8.8.8.8",
+                    Ttl = 300,
+                    NameServers = new[] { "ns2.test.com" }
+                });
+
+            var whoisGateway = new Mock<IWhoisGateway>();
+            whoisGateway
+                .Setup(gateway => gateway.QueryAsync("test.com", It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new WhoisLookupResult
+                {
+                    Raw = "Name Server: ns1.test.com",
+                    OrganizationName = string.Empty
+                });
+            whoisGateway
+                .Setup(gateway => gateway.QueryAsync("8.8.8.8", It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new WhoisLookupResult
+                {
+                    Raw = string.Empty,
+                    OrganizationName = "Google"
+                });
+
+            var service = CreateService(db, dnsGateway, whoisGateway, now);
+
+            var response = await service.GetAsync("test.com");
+            var persistedRecord = db.Domains.Single(x => x.Name == "test.com");
+
+            Assert.AreEqual("external", response.Source);
+            Assert.AreEqual("8.8.8.8", response.Ip);
+            Assert.AreEqual("Google", response.HostedAt);
+            Assert.AreEqual(300, persistedRecord.Ttl);
+            Assert.AreEqual("8.8.8.8", persistedRecord.Ip);
+
+            dnsGateway.Verify(gateway => gateway.QueryAsync("test.com", It.IsAny<CancellationToken>()), Times.Once);
+            whoisGateway.Verify(gateway => gateway.QueryAsync("test.com", It.IsAny<CancellationToken>()), Times.Once);
+            whoisGateway.Verify(gateway => gateway.QueryAsync("8.8.8.8", It.IsAny<CancellationToken>()), Times.Once);
         }
 
         [TestMethod]
-        public void Domain_Moking_LookupClient()
+        public async Task Domain_InvalidDomain_ThrowsValidationError()
         {
-            //arrange 
-            var lookupClient = new Mock<ILookupClient>();
-            var domainName = "test.com";
+            var now = new DateTime(2026, 2, 26, 12, 0, 0, DateTimeKind.Utc);
 
-            var dnsResponse = new Mock<IDnsQueryResponse>();
-            lookupClient.Setup(l => l.QueryAsync(domainName, QueryType.ANY, QueryClass.IN, System.Threading.CancellationToken.None)).ReturnsAsync(dnsResponse.Object);
+            using var db = CreateInMemoryDbContext();
+            var dnsGateway = new Mock<IDnsLookupGateway>(MockBehavior.Strict);
+            var whoisGateway = new Mock<IWhoisGateway>(MockBehavior.Strict);
+            var service = CreateService(db, dnsGateway, whoisGateway, now);
 
-            //arrange 
-            var options = new DbContextOptionsBuilder<DatabaseContext>()
-                .UseInMemoryDatabase(databaseName: "Find_searches_url")
-                .Options;
-
-            // Use a clean instance of the context to run the test
-            using (var db = new DatabaseContext(options))
-            {
-                //inject lookupClient in controller constructor
-                var controller = new DomainController(db/*,IWhoisClient, lookupClient*/ );
-
-                //act
-                var response = controller.Get("test.com");
-                var result = response.Result as OkObjectResult;
-                var obj = result.Value as Domain;
-                Assert.IsNotNull(obj);
-            }
+            await Assert.ThrowsExceptionAsync<DomainValidationException>(() => service.GetAsync("umbler"));
         }
 
         [TestMethod]
-        public void Domain_Moking_WhoisClient()
+        public async Task Domain_Moking_WhoisClient()
         {
-            //arrange
-            //whois is a static class, we need to create a class to "wrapper" in a mockable version of WhoisClient
-            //var whoisClient = new Mock<IWhoisClient>();
-            //var domainName = "test.com";
+            var now = new DateTime(2026, 2, 26, 12, 0, 0, DateTimeKind.Utc);
 
-            //whoisClient.Setup(l => l.QueryAsync(domainName)).Return();
+            using var db = CreateInMemoryDbContext();
 
-            ////arrange 
-            //var options = new DbContextOptionsBuilder<DatabaseContext>()
-            //    .UseInMemoryDatabase(databaseName: "Find_searches_url")
-            //    .Options;
+            var dnsGateway = new Mock<IDnsLookupGateway>();
+            dnsGateway
+                .Setup(gateway => gateway.QueryAsync("test.com", It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new DnsLookupResult
+                {
+                    Ip = "10.0.0.1",
+                    Ttl = 120,
+                    NameServers = new[] { "ns1.test.com" }
+                });
 
-            //// Use a clean instance of the context to run the test
-            //using (var db = new DatabaseContext(options))
-            //{
-            //    //inject IWhoisClient in controller's constructor
-            //    var controller = new DomainController(db/*,IWhoisClient, ILookupClient*/);
+            var whoisGateway = new Mock<IWhoisGateway>();
+            whoisGateway
+                .Setup(gateway => gateway.QueryAsync("test.com", It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new WhoisLookupResult
+                {
+                    Raw = "Name Server: ns1.test.com",
+                    OrganizationName = string.Empty
+                });
+            whoisGateway
+                .Setup(gateway => gateway.QueryAsync("10.0.0.1", It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new WhoisLookupResult
+                {
+                    Raw = string.Empty,
+                    OrganizationName = "umbler.corp"
+                });
 
-            //    //act
-            //    var response = controller.Get("test.com");
-            //    var result = response.Result as OkObjectResult;
-            //    var obj = result.Value as Domain;
-            //    Assert.IsNotNull(obj);
-            //}
+            var service = CreateService(db, dnsGateway, whoisGateway, now);
+
+            var response = await service.GetAsync("test.com");
+
+            Assert.IsNotNull(response);
+            Assert.AreEqual("10.0.0.1", response.Ip);
+            whoisGateway.Verify(gateway => gateway.QueryAsync("test.com", It.IsAny<CancellationToken>()), Times.Once);
+        }
+
+        [TestMethod]
+        public async Task Domain_Controller_Returns_Dto_Only()
+        {
+            var domainLookupService = new Mock<IDomainLookupService>();
+            domainLookupService
+                .Setup(service => service.GetAsync("umbler.com", It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new DomainLookupResponseDto
+                {
+                    Domain = "umbler.com",
+                    Ip = "177.55.66.99",
+                    HostedAt = "Umbler",
+                    Whois = "whois output",
+                    NameServers = new[] { "ns1.umbler.com" },
+                    Source = "external"
+                });
+
+            var controller = new DomainController(domainLookupService.Object);
+
+            var response = await controller.Get("umbler.com", CancellationToken.None);
+            var result = response.Result as OkObjectResult;
+            var dto = result?.Value as DomainLookupResponseDto;
+
+            Assert.IsNotNull(result);
+            Assert.IsNotNull(dto);
+            Assert.IsNull(dto!.GetType().GetProperty("Id"));
+            Assert.IsNull(dto.GetType().GetProperty("Ttl"));
+            Assert.IsNull(dto.GetType().GetProperty("UpdatedAt"));
+        }
+
+        private static DomainLookupService CreateService(
+            DatabaseContext dbContext,
+            Mock<IDnsLookupGateway> dnsGateway,
+            Mock<IWhoisGateway> whoisGateway,
+            DateTime utcNow)
+        {
+            var repository = new DomainRepository(dbContext);
+            return new DomainLookupService(
+                repository,
+                dnsGateway.Object,
+                whoisGateway.Object,
+                new FakeClock(utcNow));
+        }
+
+        private static DatabaseContext CreateInMemoryDbContext()
+        {
+            var options = new DbContextOptionsBuilder<DatabaseContext>()
+                .UseInMemoryDatabase($"db-{Guid.NewGuid():N}")
+                .Options;
+
+            return new DatabaseContext(options);
+        }
+
+        private sealed class FakeClock : IClock
+        {
+            public FakeClock(DateTime utcNow)
+            {
+                UtcNow = utcNow;
+            }
+
+            public DateTime UtcNow { get; }
         }
     }
 }

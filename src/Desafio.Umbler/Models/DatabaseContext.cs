@@ -1,5 +1,4 @@
-using System;
-using System.ComponentModel.DataAnnotations;
+using Desafio.Umbler.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 
 namespace Desafio.Umbler.Models
@@ -12,18 +11,13 @@ namespace Desafio.Umbler.Models
 
         }
 
-        public DbSet<Domain> Domains { get; set; }
-    }
+        public DbSet<DomainRecord> Domains { get; set; }
 
-    public class Domain
-    {
-        [Key]
-        public int Id { get; set; }
-        public string Name { get; set; }
-        public string Ip { get; set; }
-        public DateTime UpdatedAt { get; set; }
-        public string WhoIs { get; set; }
-        public int Ttl { get; set; }
-        public string HostedAt { get; set; }
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            base.OnModelCreating(modelBuilder);
+
+            modelBuilder.Entity<DomainRecord>().ToTable("Domains");
+        }
     }
 }
