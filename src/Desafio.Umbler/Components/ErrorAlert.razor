@@ -1,0 +1,11 @@
+@if (!string.IsNullOrWhiteSpace(Message))
+{
+    <div class="animate-in" style="background: #fff5f5; border: 1px solid #feb2b2; color: #c53030; padding: 16px; border-radius: 8px; margin-bottom: 20px; font-weight: 500;">
+        ⚠️ @Message
+    </div>
+}
+
+@code {
+    [Parameter]
+    public string Message { get; set; } = string.Empty;
+}

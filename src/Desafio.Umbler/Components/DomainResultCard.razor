@@ -1,0 +1,63 @@
+@if (Result is not null)
+{
+    <div class="domain-card animate-in @(string.IsNullOrEmpty(Result.Ip) ? "unavailable" : "available")">
+        <div class="card-header-flex">
+            <h3 class="domain-name">@OrDash(Result.Domain)</h3>
+            <span class="badge @(string.IsNullOrEmpty(Result.Ip) ? "badge-danger" : "badge-success")">
+                @(string.IsNullOrEmpty(Result.Ip) ? "Não disponível" : "Ativo")
+            </span>
+        </div>
+
+        <div class="info-grid">
+            <div class="info-item">
+                <span class="info-label">Endereço IP (A)</span>
+                <span class="info-value">@OrDash(Result.Ip)</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">Hospedagem</span>
+                <span class="info-value">@OrDash(Result.HostedAt)</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">Origem da Consulta</span>
+                <span class="info-value" style="text-transform: capitalize">@OrDash(Result.Source)</span>
+            </div>
+        </div>
+
+        <div style="margin-top: 25px;">
+            <span class="info-label" style="display: block; margin-bottom: 10px;">Name Servers</span>
+            <div class="info-grid" style="grid-template-columns: 1fr 1fr;">
+                @if (Result.NameServers is null || Result.NameServers.Count == 0)
+                {
+                    <span class="info-value" style="color: var(--text-muted)">Nenhum servidor encontrado</span>
+                }
+                else
+                {
+                    @foreach (var ns in Result.NameServers)
+                    {
+                        <div class="info-value" style="background: #f1f3f5; padding: 6px 12px; border-radius: 6px; font-size: 0.9rem;">
+                            @ns
+                        </div>
+                    }
+                }
+            </div>
+        </div>
+
+        @if (!string.IsNullOrEmpty(Result.Whois))
+        {
+            <div style="margin-top: 25px;">
+                <span class="info-label" style="display: block; margin-bottom: 10px;">WHOIS Resultado</span>
+                <pre style="background: #212529; color: #f8f9fa; padding: 15px; border-radius: 8px; font-size: 0.85rem; overflow-x: auto; max-height: 300px;">@Result.Whois</pre>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    [Parameter]
+    public DomainLookupVm? Result { get; set; }
+
+    private static string OrDash(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value) ? "-" : value;
+    }
+}

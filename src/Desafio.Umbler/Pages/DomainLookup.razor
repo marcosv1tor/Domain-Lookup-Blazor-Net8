@@ -1,0 +1,63 @@
+@page "/"
+@inject IDomainApiClient DomainApiClient
+
+<div class="container animate-in">
+    <h1>Consulta de Domínio</h1>
+    <p style="text-align: center; color: var(--text-muted); margin-top: -15px; margin-bottom: 30px; font-size: 1.1rem;">
+        Verifique disponibilidade, IP, Name Servers e dados de WHOIS em tempo real.
+    </p>
+
+    <DomainForm
+        Domain="@_domain"
+        IsLoading="@_isLoading"
+        OnDomainChanged="HandleDomainChangedAsync"
+        OnSubmit="HandleSubmitAsync" />
+
+    <ErrorAlert Message="@_errorMessage" />
+    <DomainResultCard Result="@_result" />
+</div>
+
+@code {
+    private string _domain = string.Empty;
+    private string _errorMessage = string.Empty;
+    private bool _isLoading;
+    private DomainLookupVm? _result;
+
+    private Task HandleDomainChangedAsync(string value)
+    {
+        _domain = value;
+        return Task.CompletedTask;
+    }
+
+    private async Task HandleSubmitAsync()
+    {
+        if (!DomainInputValidator.TryNormalize(_domain, out var normalizedDomain, out var validationError))
+        {
+            _errorMessage = validationError;
+            _result = null;
+            return;
+        }
+
+        _errorMessage = string.Empty;
+        _isLoading = true;
+
+        try
+        {
+            _result = await DomainApiClient.GetAsync(normalizedDomain);
+        }
+        catch (DomainApiClientException ex)
+        {
+            _errorMessage = ex.Message;
+            _result = null;
+        }
+        catch (Exception)
+        {
+            _errorMessage = "Não foi possível concluir a consulta. Tente novamente.";
+            _result = null;
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+}

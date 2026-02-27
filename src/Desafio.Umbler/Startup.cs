@@ -1,5 +1,13 @@
-﻿using System;
+using System;
+using Desafio.Umbler.Application.Contracts;
+using Desafio.Umbler.Application.Services;
+using Desafio.Umbler.Infrastructure.Clock;
+using Desafio.Umbler.Infrastructure.External;
+using Desafio.Umbler.Infrastructure.Persistence;
 using Desafio.Umbler.Models;
+using Desafio.Umbler.Web.Clients;
+using Desafio.Umbler.Web.Middleware;
+using DnsClient;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.EntityFrameworkCore;
@@ -12,59 +20,67 @@ namespace Desafio.Umbler
 {
     public class Startup
     {
-        public Startup(IConfiguration configuration)
+        public Startup(IConfiguration configuration, IWebHostEnvironment environment)
         {
             Configuration = configuration;
+            Environment = environment;
         }
 
         public IConfiguration Configuration { get; }
 
-        // This method gets called by the runtime. Use this method to add services to the container.
+        public IWebHostEnvironment Environment { get; }
+
         public void ConfigureServices(IServiceCollection services)
         {
-                var connectionString = Configuration.GetConnectionString("DefaultConnection");
+            var connectionString = Configuration.GetConnectionString("DefaultConnection");
+            var serverVersion = new MySqlServerVersion(new Version(8, 0, 27));
 
-                // Replace with your server version and type.
-                // Use 'MariaDbServerVersion' for MariaDB.
-                // Alternatively, use 'ServerVersion.AutoDetect(connectionString)'.
-                // For common usages, see pull request #1233.
-                var serverVersion = new MySqlServerVersion(new Version(8, 0, 27));
+            services.AddDbContext<DatabaseContext>(dbContextOptions =>
+            {
+                dbContextOptions.UseMySql(connectionString, serverVersion);
 
-                // Replace 'YourDbContext' with the name of your own DbContext derived class.
-                services.AddDbContext<DatabaseContext>(
-                    dbContextOptions => dbContextOptions
-                        .UseMySql(connectionString, serverVersion)
-                        // The following three options help with debugging, but should
-                        // be changed or removed for production.
+                if (Environment.IsDevelopment())
+                {
+                    dbContextOptions
                         .LogTo(Console.WriteLine, LogLevel.Information)
                         .EnableSensitiveDataLogging()
-                        .EnableDetailedErrors()
-                );
+                        .EnableDetailedErrors();
+                }
+            });
 
+            services.AddSingleton<ILookupClient>(_ => new LookupClient());
 
+            services.AddSingleton<IClock, SystemClock>();
+            services.AddScoped<IDomainRepository, DomainRepository>();
+            services.AddScoped<IDnsLookupGateway, DnsLookupGateway>();
+            services.AddScoped<IWhoisGateway, WhoisGateway>();
+            services.AddScoped<IDomainLookupService, DomainLookupService>();
+
+            services.AddHttpClient<IDomainApiClient, DomainApiClient>();
+
+            services.AddRazorPages();
+            services.AddServerSideBlazor();
             services.AddControllersWithViews();
         }
 
-        // This method gets called by the runtime. Use this method to configure the HTTP request pipeline.
         public void Configure(IApplicationBuilder app, IWebHostEnvironment env)
         {
-            if (env.IsDevelopment())
+            if (!env.IsDevelopment())
             {
-                app.UseDeveloperExceptionPage();
+                app.UseHsts();
             }
-            else
-            {
-                app.UseExceptionHandler("/Home/Error");
-            }
+
+            app.UseMiddleware<GlobalExceptionMiddleware>();
 
             app.UseStaticFiles();
             app.UseRouting();
 
             app.UseEndpoints(endpoints =>
             {
-                endpoints.MapControllerRoute(
-                    name: "default",
-                    pattern: "{controller=Home}/{action=Index}/{id?}");
+                endpoints.MapControllers();
+                endpoints.MapRazorPages();
+                endpoints.MapBlazorHub();
+                endpoints.MapFallbackToPage("/_Host");
             });
         }
     }

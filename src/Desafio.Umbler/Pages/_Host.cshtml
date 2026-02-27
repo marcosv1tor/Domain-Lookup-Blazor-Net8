@@ -1,0 +1,42 @@
+@page "/"
+@namespace Desafio.Umbler.Pages
+@addTagHelper *, Microsoft.AspNetCore.Mvc.TagHelpers
+
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Desafio Umbler</title>
+    <base href="~/" />
+    <link rel="icon" type="image/x-icon" href="~/favicon.ico" />
+    <link rel="shortcut icon" type="image/x-icon" href="~/favicon.ico" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    
+    <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
+</head>
+<body>
+    <nav style="background: var(--primary-color); padding: 15px 0; margin-bottom: 30px; box-shadow: var(--shadow); border-radius:4px">
+        <div class="container" style="margin: 0 auto; display: flex; align-items: center; justify-content: center;">
+            <a href="/" style="text-decoration: none; color: white; font-weight: 800; font-size: 1.5rem; letter-spacing: -1px;">
+                UMBLER <span style="font-weight: 300;">DESAFIO (Marcos Vítor)</span>
+            </a>
+        </div>
+    </nav>
+
+    <div class="body-content">
+        <component type="typeof(App)" render-mode="ServerPrerendered" />
+        
+        <footer style="margin-top: 50px; padding: 30px 0; border-top: 1px solid #dee2e6; text-align: center; color: var(--text-muted); font-size: 0.9rem;">
+            <div class="container">
+                <b>Umbler, Inc. &copy; @DateTime.Now.Year</b>
+            </div>
+        </footer>
+    </div>
+
+    <script src="_framework/blazor.server.js"></script>
+</body>
+</html>
